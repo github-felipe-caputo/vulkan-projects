@@ -53,7 +53,7 @@
 		1327243120A465DA0000FB21 /* compile.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = compile.sh; sourceTree = "<group>"; };
 		1327243220A4680A0000FB21 /* vert.spv */ = {isa = PBXFileReference; lastKnownFileType = file; path = vert.spv; sourceTree = "<group>"; };
 		1327243320A4680A0000FB21 /* frag.spv */ = {isa = PBXFileReference; lastKnownFileType = file; path = frag.spv; sourceTree = "<group>"; };
-		134837CF21848F1F001C168F /* shader.comp */ = {isa = PBXFileReference; lastKnownFileType = text; path = shader.comp; sourceTree = "<group>"; };
+		134837CF21848F1F001C168F /* shader.comp */ = {isa = PBXFileReference; explicitFileType = sourcecode.glsl; fileEncoding = 4; path = shader.comp; sourceTree = "<group>"; wrapsLines = 0; };
 		134837D4218491C2001C168F /* comp.spv */ = {isa = PBXFileReference; lastKnownFileType = file; path = comp.spv; sourceTree = "<group>"; };
 		134837D82184A5FD001C168F /* lodepng.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = lodepng.cpp; sourceTree = "<group>"; };
 		134837D92184A5FD001C168F /* lodepng.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = lodepng.h; sourceTree = "<group>"; };
