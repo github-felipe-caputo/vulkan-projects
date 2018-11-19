@@ -5,67 +5,88 @@
 #define WINDOW_HEIGHT 500
 #define WORKGROUP_SIZE 32
 
+#define INF 100000000
+
 layout (local_size_x = WORKGROUP_SIZE, local_size_y = WORKGROUP_SIZE, local_size_z = 1 ) in;
 
 struct Pixel {
     vec4 value;
 };
 
-layout(binding = 0) buffer buf
-{
+layout(binding = 0) buffer buf {
     Pixel imageData[];
 };
 
-// START - Camera values and functions
+// -------------------------------------------
+// Camera
+// -------------------------------------------
 struct Camera {
     vec3 position;
     vec3 lookAt;
     vec3 up;
-    float focalLength; // between 0 and 1
+    float zNear;
+    float zFar;
+    float fov;
 };
 
-Camera createCamera(vec3 position, vec3 lookAt, vec3 up, float focalLength) {
+Camera createCamera(vec3 position, vec3 lookAt, vec3 up) {
     Camera cam;
     cam.position = position;
     cam.lookAt = lookAt;
     cam.up = up;
-    cam.focalLength = focalLength;
+    cam.zNear = 0.1f;
+    cam.zFar = 10.0f;
+    cam.fov = 2.3f; // in radians, 2 is aprox 120 degrees
     return cam;
 }
 
 // Camera To World Matrix == inverse of view matrix
 // Transforms from camera-view to world-view
 mat4 cameraToWorldMatrix(Camera cam) {
-    // Below is the view matrix, need to invert it
-
-    // right-handed coordinate system
-    // Note that camera space matches OpenGL convention:
-    // camera's forward is the negative Z axis.
+    // right-handed coordinate system (thumb is X)
     vec3 pos = cam.position;
-    vec3 zaxis = normalize(pos - cam.lookAt); // The "forward" vector.
-    vec3 xaxis = normalize(cross(cam.up, zaxis));  // The "right" vector.
-    vec3 yaxis = cross(zaxis, xaxis);       // The "up" vector.
-
+    vec3 zaxis = normalize(pos - cam.lookAt);     // The "forward" vector.
+    vec3 xaxis = normalize(cross(cam.up, zaxis)); // The "right" vector.
+    vec3 yaxis = cross(zaxis, xaxis);             // The "up" vector.
+    
     mat4 matrix = {
-        vec4(           xaxis.x,            yaxis.x,            zaxis.x,  0 ),
-        vec4(           xaxis.y,            yaxis.y,            zaxis.y,  0 ),
-        vec4(           xaxis.z,            yaxis.z,            zaxis.z,  0 ),
-        vec4(-dot( xaxis, pos ), -dot( yaxis, pos ), -dot( zaxis, pos ),  1 )
+        vec4( xaxis.x, xaxis.y, xaxis.z, 0 ),
+        vec4( yaxis.x, yaxis.y, yaxis.z, 0 ),
+        vec4( zaxis.x, zaxis.y, zaxis.z, 0 ),
+        vec4(   pos.x,   pos.y,   pos.z, 1 )
     };
 
-    return inverse(matrix);
+    return matrix;
 }
 
+// Projection to Camera Matrix == inverse of projection matrix
+// in this case, a perspective projection
+mat4 projectionToCameraMatrix(Camera cam) {
+    float aspect = WINDOW_WIDTH / WINDOW_HEIGHT;
+    float zn = cam.zNear;
+    float zf = cam.zFar;
+    float f = tan(cam.fov / 2.0f);
+    
+    mat4 matrix = {
+        vec4( 1.0f/(aspect*f),      0,                0,                   0 ),
+        vec4(               0, 1.0f/f,                0,                   0 ),
+        vec4(               0,      0, -(zf+zn)/(zf-zn),  -(2*zf*zn)/(zf-zn) ),
+        vec4(               0,      0,            -1.0f,                   0 ),
+    };
+    
+    return inverse(matrix);
+}
 // END - Camera values and functions
 
-
-// START - Ray values and functions
+// -------------------------------------------
+// Ray
+// -------------------------------------------
 struct Ray {
     vec3 origin;
     vec3 direction;
 };
 
-Ray CreateRay(vec3 origin, vec3 direction) {
+Ray createRay(vec3 origin, vec3 direction) {
     Ray ray;
     ray.origin = origin;
     ray.direction = direction;
@@ -74,19 +95,104 @@ Ray CreateRay(vec3 origin, vec3 direction) {
 
 Ray createCameraRay(Camera cam, vec2 uv) {
     mat4 cameraToWorld = cameraToWorldMatrix(cam);
+    mat4 projectionToCamera = projectionToCameraMatrix(cam);
 
     // Transform the camera origin to world space
     vec3 origin = (cameraToWorld * vec4(0.0f, 0.0f, 0.0f, 1.0f)).xyz;
 
-    // Consider direction at uv with z being the camera's focal length
-    vec3 direction = vec3(uv, cam.focalLength);
+    // From projection view to camera view
+    vec3 direction = (projectionToCamera * vec4(uv, 0.0f, 1.0f)).xyz;
 
     // Transform the direction from camera to world space and normalize
     direction = (cameraToWorld * vec4(direction, 0.0f)).xyz;
     direction = normalize(direction);
-    return CreateRay(origin, direction);
+    return createRay(origin, direction);
 }
 // END - Ray values and functions
+
+
+// -------------------------------------------
+// RayHit
+// -------------------------------------------
+struct RayHit {
+    vec3 position;
+    vec3 normal;
+    float dist;
+};
+
+RayHit createRayHit() {
+    RayHit rayHit;
+    rayHit.position = vec3(0.0f, 0.0f, 0.0f);
+    rayHit.normal = vec3(0.0f, 0.0f, 0.0f);
+    rayHit.dist = INF;
+    return rayHit;
+}
+
+// -------------------------------------------
+// Ground plane
+// -------------------------------------------
+void intersectGroundPlane(Ray ray, inout RayHit bestHit) {
+    // Ground plane is at y=0 with normal (0,1,0)
+    float t = -ray.origin.y / ray.direction.y;
+    if (t > 0 && t < bestHit.dist) {
+        bestHit.dist = t;
+        bestHit.position = ray.origin + t * ray.direction;
+        bestHit.normal = vec3(0.0f, 1.0f, 0.0f);
+    }
+}
+
+// -------------------------------------------
+// Sphere
+// -------------------------------------------
+struct Sphere {
+    vec3 position;
+    float radius;
+};
+
+Sphere createSphere(vec3 position, float radius) {
+    Sphere sphere;
+    sphere.position = position;
+    sphere.radius = radius;
+    return sphere;
+}
+
+void intersectSphere(Ray ray, Sphere sphere, inout RayHit bestHit) {
+    // Calculate distance along the ray where the sphere is intersected
+    vec3 d = ray.origin - sphere.position;
+    float p1 = -dot(ray.direction, d);
+    float p2sqr = p1 * p1 - dot(d, d) + sphere.radius * sphere.radius;
+    if (p2sqr < 0) {
+        return;
+    }
+    float p2 = sqrt(p2sqr);
+    float t = p1 - p2 > 0 ? p1 - p2 : p1 + p2;
+    
+    if (t > 0 && t < bestHit.dist) {
+        bestHit.dist = t;
+        bestHit.position = ray.origin + t * ray.direction;
+        bestHit.normal = normalize(bestHit.position - sphere.position);
+    }
+}
+
+RayHit trace(Ray ray) {
+    RayHit bestHit = createRayHit();
+    intersectGroundPlane(ray, bestHit);
+    
+    Sphere sphere = createSphere(vec3(0.0f, 1.0f, 4.0f), 1.0f);
+    intersectSphere(ray, sphere, bestHit);
+    
+    return bestHit;
+}
+
+vec3 shade(Ray ray, RayHit bestHit) {
+    if (bestHit.dist < INF) {
+        // Return the normal for now
+        return bestHit.normal * 0.5f + 0.5f;
+    } else {
+        // Background = black
+        return vec3(0.0f, 0.0f, 0.0f);
+    }
+}
 
 void main() {
     /* In order to fit the work into workgroups, some unnecessary threads are launched.
@@ -98,9 +204,17 @@ void main() {
     // Transform pixel to [-1,1] range
     float x = 2.0f * float(gl_GlobalInvocationID.x) / float(WINDOW_WIDTH) - 1.0f;
     float y = 2.0f * float(gl_GlobalInvocationID.y) / float(WINDOW_HEIGHT) - 1.0f;
+    
+    // Do we have (-1,-1) at bottom left
+    x = -x;
+    y = -y;
 
-    Camera cam = createCamera(vec3(0,0,0), vec3(0,-1,0), vec3(0,0,1), 0.5f);
+    Camera cam = createCamera(vec3(0,1,0), vec3(0,1,1), vec3(0,1,0));
     Ray ray = createCameraRay(cam, vec2(x, y));
+    
+    // Trace and shade
+    RayHit hit = trace(ray);
+    vec3 result = shade(ray, hit);
 
-    imageData[WINDOW_WIDTH * gl_GlobalInvocationID.y + gl_GlobalInvocationID.x].value = vec4(ray.direction, 1.0);
+    imageData[WINDOW_WIDTH * gl_GlobalInvocationID.y + gl_GlobalInvocationID.x].value = vec4(result, 1.0);
 }
