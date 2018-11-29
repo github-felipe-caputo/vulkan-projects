@@ -675,10 +675,10 @@ private:
         std::vector<unsigned char> image;
         image.reserve(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
         for (int i = 0; i < WINDOW_WIDTH * WINDOW_HEIGHT; ++i) {
-            image.push_back((unsigned char)(255.0f * (pmappedMemory[i].r)));
-            image.push_back((unsigned char)(255.0f * (pmappedMemory[i].g)));
-            image.push_back((unsigned char)(255.0f * (pmappedMemory[i].b)));
-            image.push_back((unsigned char)(255.0f * (pmappedMemory[i].a)));
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].r, 0, 1)));
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].g, 0, 1)));
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].b, 0, 1)));
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].a, 0, 1)));
         }
         
         vkUnmapMemory(device, storageBufferMemory);
@@ -691,6 +691,10 @@ private:
             printf("Encoder error %d: %s\n", error, lodepng_error_text(error));
             throw std::runtime_error("Error enconding png image!");
         }
+    }
+    
+    double clamp(double x, double lower, double upper) {
+        return std::min(upper, std::max(x, lower));
     }
 };
 

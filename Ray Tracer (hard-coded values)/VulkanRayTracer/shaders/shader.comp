@@ -7,6 +7,8 @@
 
 #define INF 100000000
 
+#define MAX_BOUNCES 8
+
 layout (local_size_x = WORKGROUP_SIZE, local_size_y = WORKGROUP_SIZE, local_size_z = 1 ) in;
 
 struct Pixel {
@@ -84,12 +86,14 @@ mat4 projectionToCameraMatrix(Camera cam) {
 struct Ray {
     vec3 origin;
     vec3 direction;
+    vec3 energy;
 };
 
 Ray createRay(vec3 origin, vec3 direction) {
     Ray ray;
     ray.origin = origin;
     ray.direction = direction;
+    ray.energy = vec3(1.0f, 1.0f, 1.0f);
     return ray;
 }
 
@@ -118,6 +122,9 @@ struct RayHit {
     vec3 position;
     vec3 normal;
     float dist;
+    
+    vec3 albedo;
+    vec3 specular;
 };
 
 RayHit createRayHit() {
@@ -125,6 +132,8 @@ RayHit createRayHit() {
     rayHit.position = vec3(0.0f, 0.0f, 0.0f);
     rayHit.normal = vec3(0.0f, 0.0f, 0.0f);
     rayHit.dist = INF;
+    rayHit.albedo = vec3(0.0f, 0.0f, 0.0f);
+    rayHit.specular = vec3(0.0f, 0.0f, 0.0f);
     return rayHit;
 }
 
@@ -138,8 +147,27 @@ void intersectGroundPlane(Ray ray, inout RayHit bestHit) {
         bestHit.dist = t;
         bestHit.position = ray.origin + t * ray.direction;
         bestHit.normal = vec3(0.0f, 1.0f, 0.0f);
+        bestHit.albedo = vec3(0.1f, 0.8f, 0.1f);
+        bestHit.specular = vec3(0.03f);
     }
 }
+
+
+// -------------------------------------------
+// Directional Light
+// -------------------------------------------
+struct DirectionalLight {
+    vec3 direction;
+    float intensity;
+};
+
+DirectionalLight createDirectionalLight() {
+    DirectionalLight light;
+    light.direction = normalize(vec3(-1.0f, -1.0f, 1.0f));
+    light.intensity = 0.8f; // between 0 and 1
+    return light;
+}
+
 
 // -------------------------------------------
 // Sphere
@@ -147,12 +175,17 @@ void intersectGroundPlane(Ray ray, inout RayHit bestHit) {
 struct Sphere {
     vec3 position;
     float radius;
+    
+    vec3 albedo;
+    vec3 specular;
 };
 
 Sphere createSphere(vec3 position, float radius) {
     Sphere sphere;
     sphere.position = position;
     sphere.radius = radius;
+    sphere.albedo = vec3(0.8f, 0.8f, 0.8f);
+    sphere.specular = vec3(0.6f, 0.6f, 0.6f);
     return sphere;
 }
 
@@ -171,6 +204,8 @@ void intersectSphere(Ray ray, Sphere sphere, inout RayHit bestHit) {
         bestHit.dist = t;
         bestHit.position = ray.origin + t * ray.direction;
         bestHit.normal = normalize(bestHit.position - sphere.position);
+        bestHit.albedo = sphere.albedo;
+        bestHit.specular = sphere.specular;
     }
 }
 
@@ -178,20 +213,47 @@ RayHit trace(Ray ray) {
     RayHit bestHit = createRayHit();
     intersectGroundPlane(ray, bestHit);
     
-    Sphere sphere = createSphere(vec3(0.0f, 1.0f, 4.0f), 1.0f);
+    Sphere sphere = createSphere(vec3(0.0f, 1.5f, 4.0f), 1.0f);
     intersectSphere(ray, sphere, bestHit);
     
     return bestHit;
 }
 
-vec3 shade(Ray ray, RayHit bestHit) {
+// Updates ray based on bestHit
+vec3 shade(inout Ray ray, RayHit bestHit) {
     if (bestHit.dist < INF) {
-        // Return the normal for now
-        return bestHit.normal * 0.5f + 0.5f;
+        DirectionalLight light = createDirectionalLight();
+        
+        // Reflect the ray and multiply energy with specular reflection
+        ray.origin = bestHit.position + bestHit.normal * 0.001f;
+        ray.direction = reflect(ray.direction, bestHit.normal);
+        ray.energy *= bestHit.specular;
+        
+        // Shadow test ray
+        Ray shadowRay = createRay(bestHit.position + bestHit.normal * 0.001f, -1 * light.direction);
+        RayHit shadowHit = trace(shadowRay);
+        if (shadowHit.dist != INF) {
+            return vec3(0.0f, 0.0f, 0.0f);
+        }
+        
+        return clamp(dot(bestHit.normal, light.direction) * -1, 0.0f, 1.0f) * light.intensity * bestHit.albedo;
     } else {
+        // Erase the ray's energy - the sky doesn't reflect anything
+        ray.energy = vec3(0.0, 0.0, 0.0);
+        
         // Background = black
         return vec3(0.0f, 0.0f, 0.0f);
     }
+}
+
+bool isZeroVector(vec3 vector) {
+    float delta = 0.0001f;
+    for (int i = 0; i < 3; i++) {
+        if (!(vector[i] >= -delta && vector[i] <= delta)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void main() {
@@ -205,7 +267,7 @@ void main() {
     float x = 2.0f * float(gl_GlobalInvocationID.x) / float(WINDOW_WIDTH) - 1.0f;
     float y = 2.0f * float(gl_GlobalInvocationID.y) / float(WINDOW_HEIGHT) - 1.0f;
     
-    // Do we have (-1,-1) at bottom left
+    // So we have (-1,-1) at bottom left and (1,1) at top right
     x = -x;
     y = -y;
 
@@ -213,8 +275,14 @@ void main() {
     Ray ray = createCameraRay(cam, vec2(x, y));
     
     // Trace and shade
-    RayHit hit = trace(ray);
-    vec3 result = shade(ray, hit);
+    vec3 result = vec3(0, 0, 0);
+    for (int i = 0; i < MAX_BOUNCES; i++) {
+        RayHit hit = trace(ray);
+        result += ray.energy * shade(ray, hit);
+        if (isZeroVector(ray.energy)) {
+            break;
+        }
+    }
 
     imageData[WINDOW_WIDTH * gl_GlobalInvocationID.y + gl_GlobalInvocationID.x].value = vec4(result, 1.0);
 }
