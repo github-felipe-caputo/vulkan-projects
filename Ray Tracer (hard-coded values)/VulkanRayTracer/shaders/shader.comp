@@ -140,6 +140,12 @@ RayHit createRayHit() {
 // -------------------------------------------
 // Ground plane
 // -------------------------------------------
+vec3 planarCheckerTexture(vec3 intersection) {
+    float d = 0.0;
+    d = mod(floor(intersection.x) + floor(intersection.z), 2.0);
+    return vec3(d,d,d) * 0.8;
+}
+
 void intersectGroundPlane(Ray ray, inout RayHit bestHit) {
     // Ground plane is at y=0 with normal (0,1,0)
     float t = -ray.origin.y / ray.direction.y;
@@ -147,8 +153,8 @@ void intersectGroundPlane(Ray ray, inout RayHit bestHit) {
         bestHit.dist = t;
         bestHit.position = ray.origin + t * ray.direction;
         bestHit.normal = vec3(0.0f, 1.0f, 0.0f);
-        bestHit.albedo = vec3(0.1f, 0.8f, 0.1f);
-        bestHit.specular = vec3(0.03f);
+        bestHit.albedo = planarCheckerTexture(bestHit.position);
+        bestHit.specular = vec3(0.08f);
     }
 }
 
@@ -184,7 +190,7 @@ Sphere createSphere(vec3 position, float radius) {
     Sphere sphere;
     sphere.position = position;
     sphere.radius = radius;
-    sphere.albedo = vec3(0.8f, 0.8f, 0.8f);
+    sphere.albedo = vec3(0.8f, 0.5f, 0.3f);
     sphere.specular = vec3(0.6f, 0.6f, 0.6f);
     return sphere;
 }
@@ -213,7 +219,7 @@ RayHit trace(Ray ray) {
     RayHit bestHit = createRayHit();
     intersectGroundPlane(ray, bestHit);
     
-    Sphere sphere = createSphere(vec3(0.0f, 1.5f, 4.0f), 1.0f);
+    Sphere sphere = createSphere(vec3(0.0f, 1.0f, 4.0f), 1.0f);
     intersectSphere(ray, sphere, bestHit);
     
     return bestHit;
@@ -238,11 +244,12 @@ vec3 shade(inout Ray ray, RayHit bestHit) {
         
         return clamp(dot(bestHit.normal, light.direction) * -1, 0.0f, 1.0f) * light.intensity * bestHit.albedo;
     } else {
-        // Erase the ray's energy - the sky doesn't reflect anything
-        ray.energy = vec3(0.0, 0.0, 0.0);
+        // Maybe more realistic the sky shouldn`t reflect anything
+        // but setting a really small energy instead gives us a more interesting scene!
+        ray.energy = vec3(0.03f, 0.03f, 0.03f);
         
-        // Background = black
-        return vec3(0.0f, 0.0f, 0.0f);
+        // Background = some fake blueish sky
+        return vec3(0.3f, 0.6f, 1.0f) * pow(clamp(ray.direction.z, 0.0f, 1.0f), 6);
     }
 }
 
