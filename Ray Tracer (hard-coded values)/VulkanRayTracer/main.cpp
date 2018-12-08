@@ -145,7 +145,7 @@ private:
         createCommandBuffer();
         
         runCommandBuffer();
-        saveRenderedImage();
+        //saveRenderedImage();
     }
     
     void cleanup() {
@@ -477,7 +477,7 @@ private:
         
         VkCommandBufferBeginInfo beginInfo = {};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // only submitted once
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT; // TODO check
         
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
             throw std::runtime_error("Failed to begin recording command buffer!");
@@ -515,7 +515,77 @@ private:
         if (vkCreateFence(device, &fenceCreateInfo, NULL, &fence) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create fence!");
         }
-
+        
+        // we will run the command buffer a number of SAMPLES to average the result
+        // as a form of anti-aliasing
+        std::vector<float> image;
+        image.reserve(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
+        for (int i = 0; i < 100; ++i) {
+            void* mappedMemory = nullptr;
+            
+            // Now we submit the command buffer on the queue, with the fence
+            if (vkQueueSubmit(computeQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to submit the command buffer and fence!");
+            }
+            
+            // Since we will read from the buffer the result from the compute shader,
+            // we need to wait on the fence, which signilizes the end of the command
+            // (with a default timeout)
+            if (vkWaitForFences(device, 1, &fence, VK_TRUE, 100000000000) != VK_SUCCESS) {
+                throw std::runtime_error("Failed wait fot the command to run!");
+            }
+            
+            // Map the buffer memory, so that we can read it
+            vkMapMemory(device, storageBufferMemory, 0, bufferSize, 0, &mappedMemory);
+            Pixel* pmappedMemory = (Pixel *) mappedMemory;
+            float opacity = 1.0f / (i + 1.0f);
+            
+            int count = 0;
+            for (int j = 0; j < WINDOW_WIDTH * WINDOW_HEIGHT; ++j) {
+                float red = (clamp(pmappedMemory[j].r, 0, 1));
+                image[count] += (red * opacity) + (red * (1.0f - opacity));
+                
+                float blue = (clamp(pmappedMemory[j].b, 0, 1));
+                image[count+1] += (blue * opacity) + (blue * (1.0f - opacity));
+                
+                float green = (clamp(pmappedMemory[j].g, 0, 1));
+                image[count+2] += (green * opacity) + (green * (1.0f - opacity));
+                
+                // alpha always 1
+                image[count+3] += 1; // just always 1
+                
+                count += 4;
+            }
+            
+            //std::cout << i << " - " << 255.0f * clamp(pmappedMemory[0].r, 0, 1) * opacity << std::endl;
+            //std::cout << i << " - " << image[0] << std::endl;
+            
+            vkUnmapMemory(device, storageBufferMemory);
+            
+            vkResetFences(device, 1, &fence);
+        }
+        
+        std::vector<unsigned char> finalImage;
+        finalImage.reserve(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
+        for (int j = 0; j < WINDOW_WIDTH * WINDOW_HEIGHT * 4; ++j) {
+            image[j] /= 100;
+            finalImage.push_back(static_cast<unsigned char>(255.0f * image[j]));
+        }
+        
+        std::cout << 255.0f *image[0] << " " << 255.0f *image[1] << " " << 255.0f *image[2] << " " << 255.0f *image[3] << std::endl;
+        std::cout << finalImage[0] << " " << finalImage[1] << " " << finalImage[2] << " " << finalImage[3] << std::endl;
+        
+        
+        // Encode the image
+        unsigned error = lodepng::encode("result.png", finalImage, WINDOW_WIDTH, WINDOW_HEIGHT);
+        
+        // if there's an error, print it
+        if (error) {
+            printf("Encoder error %d: %s\n", error, lodepng_error_text(error));
+            throw std::runtime_error("Error enconding png image!");
+        }
+        
+/*
         // Now we submit the command buffer on the queue, with the fence
         if (vkQueueSubmit(computeQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
             throw std::runtime_error("Failed to submit the command buffer and fence!");
@@ -527,8 +597,37 @@ private:
         if (vkWaitForFences(device, 1, &fence, VK_TRUE, 100000000000) != VK_SUCCESS) {
             throw std::runtime_error("Failed wait fot the command to run!");
         }
-        
+        */
         vkDestroyFence(device, fence, NULL);
+    }
+    
+    void saveRenderedImage() {
+        void* mappedMemory = nullptr;
+        
+        // Map the buffer memory, so that we can read it
+        vkMapMemory(device, storageBufferMemory, 0, bufferSize, 0, &mappedMemory);
+        Pixel* pmappedMemory = (Pixel *) mappedMemory;
+        
+        // Get the color data from the buffer, and cast it to bytes.
+        std::vector<unsigned char> image;
+        image.reserve(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
+        for (int i = 0; i < WINDOW_WIDTH * WINDOW_HEIGHT; ++i) {
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].r, 0, 1)));
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].g, 0, 1)));
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].b, 0, 1)));
+            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].a, 0, 1)));
+        }
+        
+        vkUnmapMemory(device, storageBufferMemory);
+        
+        // Encode the image
+        unsigned error = lodepng::encode("result.png", image, WINDOW_WIDTH, WINDOW_HEIGHT);
+        
+        // if there's an error, print it
+        if (error) {
+            printf("Encoder error %d: %s\n", error, lodepng_error_text(error));
+            throw std::runtime_error("Error enconding png image!");
+        }
     }
     
     void createStorageBuffer() {
@@ -662,35 +761,6 @@ private:
         descriptorWrite.pBufferInfo = &bufferInfo;
 
         vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
-    }
-    
-    void saveRenderedImage() {
-        void* mappedMemory = nullptr;
-        
-        // Map the buffer memory, so that we can read it
-        vkMapMemory(device, storageBufferMemory, 0, bufferSize, 0, &mappedMemory);
-        Pixel* pmappedMemory = (Pixel *) mappedMemory;
-        
-        // Get the color data from the buffer, and cast it to bytes.
-        std::vector<unsigned char> image;
-        image.reserve(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
-        for (int i = 0; i < WINDOW_WIDTH * WINDOW_HEIGHT; ++i) {
-            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].r, 0, 1)));
-            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].g, 0, 1)));
-            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].b, 0, 1)));
-            image.push_back((unsigned char)(255.0f * clamp(pmappedMemory[i].a, 0, 1)));
-        }
-        
-        vkUnmapMemory(device, storageBufferMemory);
-        
-        //Encode the image
-        unsigned error = lodepng::encode("result.png", image, WINDOW_WIDTH, WINDOW_HEIGHT);
-        
-        //if there's an error, display it
-        if (error) {
-            printf("Encoder error %d: %s\n", error, lodepng_error_text(error));
-            throw std::runtime_error("Error enconding png image!");
-        }
     }
     
     double clamp(double x, double lower, double upper) {
