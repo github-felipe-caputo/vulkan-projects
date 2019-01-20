@@ -1,0 +1,305 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+
+#define WINDOW_WIDTH 500
+#define WINDOW_HEIGHT 500
+#define WORKGROUP_SIZE 32
+
+#define INF 100000000
+
+#define MAX_BOUNCES 4
+
+layout (local_size_x = WORKGROUP_SIZE, local_size_y = WORKGROUP_SIZE, local_size_z = 1 ) in;
+
+struct Pixel {
+    vec4 value;
+};
+
+layout(binding = 0) buffer buf {
+    Pixel imageData[];
+};
+
+// -------------------------------------------
+// Camera
+// -------------------------------------------
+struct Camera {
+    vec3 position;
+    vec3 lookAt;
+    vec3 up;
+    float zNear;
+    float zFar;
+    float fov;
+};
+
+Camera createCamera(vec3 position, vec3 lookAt, vec3 up) {
+    Camera cam;
+    cam.position = position;
+    cam.lookAt = lookAt;
+    cam.up = up;
+    cam.zNear = 0.1f;
+    cam.zFar = 10.0f;
+    cam.fov = 2.3f; // in radians, 2 is aprox 120 degrees
+    return cam;
+}
+
+// Camera To World Matrix == inverse of view matrix
+// Transforms from camera-view to world-view
+mat4 cameraToWorldMatrix(Camera cam) {
+    // right-handed coordinate system (thumb is X)
+    vec3 pos = cam.position;
+    vec3 zaxis = normalize(pos - cam.lookAt);     // The "forward" vector.
+    vec3 xaxis = normalize(cross(cam.up, zaxis)); // The "right" vector.
+    vec3 yaxis = cross(zaxis, xaxis);             // The "up" vector.
+    
+    mat4 matrix = {
+        vec4( xaxis.x, xaxis.y, xaxis.z, 0 ),
+        vec4( yaxis.x, yaxis.y, yaxis.z, 0 ),
+        vec4( zaxis.x, zaxis.y, zaxis.z, 0 ),
+        vec4(   pos.x,   pos.y,   pos.z, 1 )
+    };
+
+    return matrix;
+}
+
+// Projection to Camera Matrix == inverse of projection matrix
+// in this case, a perspective projection
+mat4 projectionToCameraMatrix(Camera cam) {
+    float aspect = WINDOW_WIDTH / WINDOW_HEIGHT;
+    float zn = cam.zNear;
+    float zf = cam.zFar;
+    float f = tan(cam.fov / 2.0f);
+    
+    mat4 matrix = {
+        vec4( 1.0f/(aspect*f),      0,                0,                   0 ),
+        vec4(               0, 1.0f/f,                0,                   0 ),
+        vec4(               0,      0, -(zf+zn)/(zf-zn),  -(2*zf*zn)/(zf-zn) ),
+        vec4(               0,      0,            -1.0f,                   0 ),
+    };
+    
+    return inverse(matrix);
+}
+// END - Camera values and functions
+
+// -------------------------------------------
+// Ray
+// -------------------------------------------
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+    vec3 energy;
+};
+
+Ray createRay(vec3 origin, vec3 direction) {
+    Ray ray;
+    ray.origin = origin;
+    ray.direction = direction;
+    ray.energy = vec3(1.0f, 1.0f, 1.0f);
+    return ray;
+}
+
+Ray createCameraRay(Camera cam, vec2 uv) {
+    mat4 cameraToWorld = cameraToWorldMatrix(cam);
+    mat4 projectionToCamera = projectionToCameraMatrix(cam);
+
+    // Transform the camera origin to world space
+    vec3 origin = (cameraToWorld * vec4(0.0f, 0.0f, 0.0f, 1.0f)).xyz;
+
+    // From projection view to camera view
+    vec3 direction = (projectionToCamera * vec4(uv, 0.0f, 1.0f)).xyz;
+
+    // Transform the direction from camera to world space and normalize
+    direction = (cameraToWorld * vec4(direction, 0.0f)).xyz;
+    direction = normalize(direction);
+    return createRay(origin, direction);
+}
+// END - Ray values and functions
+
+
+// -------------------------------------------
+// RayHit
+// -------------------------------------------
+struct RayHit {
+    vec3 position;
+    vec3 normal;
+    float dist;
+    
+    vec3 albedo;
+    vec3 specular;
+};
+
+RayHit createRayHit() {
+    RayHit rayHit;
+    rayHit.position = vec3(0.0f, 0.0f, 0.0f);
+    rayHit.normal = vec3(0.0f, 0.0f, 0.0f);
+    rayHit.dist = INF;
+    rayHit.albedo = vec3(0.0f, 0.0f, 0.0f);
+    rayHit.specular = vec3(0.0f, 0.0f, 0.0f);
+    return rayHit;
+}
+
+// -------------------------------------------
+// Ground plane
+// -------------------------------------------
+vec3 planarCheckerTexture(vec3 intersection) {
+    float d = 0.0;
+    d = mod(floor(intersection.x) + floor(intersection.z), 2.0);
+    return vec3(d,d,d) * 0.9;
+}
+
+void intersectGroundPlane(Ray ray, inout RayHit bestHit) {
+    // Ground plane is at y=0 with normal (0,1,0)
+    float t = -ray.origin.y / ray.direction.y;
+    if (t > 0 && t < bestHit.dist) {
+        bestHit.dist = t;
+        bestHit.position = ray.origin + t * ray.direction;
+        bestHit.normal = vec3(0.0f, 1.0f, 0.0f);
+        bestHit.albedo = planarCheckerTexture(bestHit.position);
+        bestHit.specular = vec3(0.08f);
+    }
+}
+
+
+// -------------------------------------------
+// Directional Light
+// -------------------------------------------
+struct DirectionalLight {
+    vec3 direction;
+    float intensity;
+};
+
+DirectionalLight createDirectionalLight() {
+    DirectionalLight light;
+    light.direction = normalize(vec3(-1.0f, -1.0f, 2.0f));
+    light.intensity = 0.8f; // between 0 and 1
+    return light;
+}
+
+
+// -------------------------------------------
+// Sphere
+// -------------------------------------------
+struct Sphere {
+    vec3 position;
+    float radius;
+    
+    vec3 albedo;
+    vec3 specular;
+};
+layout(binding = 1) uniform SphereBuffer {
+    Sphere someSphere;
+};
+
+Sphere createSphere(vec3 position, float radius, vec3 albedo, vec3 specular) {
+    Sphere sphere;
+    sphere.position = position;
+    sphere.radius = radius;
+    sphere.albedo = albedo;
+    sphere.specular = specular;
+    return sphere;
+}
+
+void intersectSphere(Ray ray, Sphere sphere, inout RayHit bestHit) {
+    // Calculate distance along the ray where the sphere is intersected
+    vec3 d = ray.origin - sphere.position;
+    float p1 = -dot(ray.direction, d);
+    float p2sqr = p1 * p1 - dot(d, d) + sphere.radius * sphere.radius;
+    if (p2sqr < 0) {
+        return;
+    }
+    float p2 = sqrt(p2sqr);
+    float t = p1 - p2 > 0 ? p1 - p2 : p1 + p2;
+    
+    if (t > 0 && t < bestHit.dist) {
+        bestHit.dist = t;
+        bestHit.position = ray.origin + t * ray.direction;
+        bestHit.normal = normalize(bestHit.position - sphere.position);
+        bestHit.albedo = sphere.albedo;
+        bestHit.specular = sphere.specular;
+    }
+}
+
+RayHit trace(Ray ray) {
+    RayHit bestHit = createRayHit();
+    intersectGroundPlane(ray, bestHit);
+    
+    //Sphere sphere2 = createSphere(vec3(-1.0f, 0.6f, 4.0f), 0.6f,
+    //                              vec3(0.5f, 0.8f, 0.3f), vec3(0.3f));
+    //Sphere sphere3 = createSphere(vec3(0.0f, 0.8f, 5.5f), 0.8f,
+    //                              vec3(0.5f, 0.3f, 0.8f), vec3(0.3f));
+    
+    Sphere sphere1 = someSphere;
+    intersectSphere(ray, sphere1, bestHit);
+    //intersectSphere(ray, sphere2, bestHit);
+    //intersectSphere(ray, sphere3, bestHit);
+    
+    return bestHit;
+}
+
+// Updates ray based on bestHit
+vec3 shade(inout Ray ray, RayHit bestHit) {
+    if (bestHit.dist < INF) {
+        DirectionalLight light = createDirectionalLight();
+        
+        // Reflect the ray and multiply energy with specular reflection
+        ray.origin = bestHit.position + bestHit.normal * 0.001f;
+        ray.direction = reflect(ray.direction, bestHit.normal);
+        ray.energy *= bestHit.specular;
+        
+        // Shadow test ray
+        Ray shadowRay = createRay(bestHit.position + bestHit.normal * 0.001f, -1 * light.direction);
+        RayHit shadowHit = trace(shadowRay);
+        if (shadowHit.dist != INF) {
+            return vec3(0.0f, 0.0f, 0.0f);
+        }
+        
+        return clamp(dot(bestHit.normal, light.direction) * -1, 0.0f, 1.0f) * light.intensity * bestHit.albedo;
+    } else {
+        // Maybe more realistic the sky shouldn`t reflect anything
+        // but setting a really small energy instead gives us a more interesting scene!
+        ray.energy = vec3(0.03f, 0.03f, 0.03f);
+        
+        // Background = some fake blueish sky
+        return vec3(0.3f, 0.6f, 1.0f) * pow(clamp(ray.direction.z, 0.0f, 1.0f), 6);
+    }
+}
+
+bool isZeroVector(vec3 vector) {
+    float delta = 0.0001f;
+    for (int i = 0; i < 3; i++) {
+        if (!(vector[i] >= -delta && vector[i] <= delta)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    /* In order to fit the work into workgroups, some unnecessary threads are launched.
+    We terminate those threads here. */
+    if(gl_GlobalInvocationID.x >= WINDOW_WIDTH || gl_GlobalInvocationID.y >= WINDOW_HEIGHT) {
+        return;
+    }
+
+    // Transform pixel to [-1,1] range
+    float x = 2.0f * float(gl_GlobalInvocationID.x) / float(WINDOW_WIDTH) - 1.0f;
+    float y = 2.0f * float(gl_GlobalInvocationID.y) / float(WINDOW_HEIGHT) - 1.0f;
+    
+    // So we have (-1,-1) at bottom left and (1,1) at top right
+    x = -x;
+    y = -y;
+
+    Camera cam = createCamera(vec3(0,1,0), vec3(0,1,1), vec3(0,1,0));
+    Ray ray = createCameraRay(cam, vec2(x, y));
+    
+    // Trace and shade
+    vec3 result = vec3(0, 0, 0);
+    for (int i = 0; i < MAX_BOUNCES; i++) {
+        RayHit hit = trace(ray);
+        result += ray.energy * shade(ray, hit);
+        if (isZeroVector(ray.energy)) {
+            break;
+        }
+    }
+
+    imageData[WINDOW_WIDTH * gl_GlobalInvocationID.y + gl_GlobalInvocationID.x].value = vec4(result, 1.0);
+}
