@@ -2,6 +2,7 @@
 
 #include "lodepng.h" // Image helper lib
 
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp> // Some helper functions and classes
 
 #include <iostream>
@@ -22,19 +23,6 @@ const int WORKGROUP_SIZE = 32; // Workgroup size in compute shader.
 #else
     const bool enableValidationLayers = false;
 #endif
-
-// -------------------------------------------
-// Sphere
-// -------------------------------------------
-
-// UBO = Uniform Buffer Object
-struct SphereUBO {
-    glm::vec3 position;
-    float radius;
-    
-    glm::vec3 albedo;
-    glm::vec3 specular;
-};
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_LUNARG_standard_validation"
@@ -103,6 +91,13 @@ private:
         float r, g, b, a;
     };
     
+    struct Sphere {
+        float radius;
+        glm::vec3 position;
+        glm::vec3 albedo;
+        glm::vec3 specular;
+    };
+    
     // To use Vulkanm you need an instance
     VkInstance instance;
     
@@ -133,10 +128,11 @@ private:
     VkDeviceMemory storageBufferMemory;
     VkDeviceSize bufferSize = sizeof(Pixel) * WINDOW_WIDTH * WINDOW_HEIGHT;
     
-    // These are the unfirom buffers we will use
-    VkBuffer uniformBuffer;
-    VkDeviceMemory uniformBufferMemory;
-    //VkDeviceSize bufferSize = sizeof(Pixel) * WINDOW_WIDTH * WINDOW_HEIGHT;
+    // These are the storage buffers we will use
+    // for spheres (we are rendering 3 spheres)
+    VkBuffer spheresStorageBuffer;
+    VkDeviceMemory spheresStorageBufferMemory;
+    VkDeviceSize spheresStoragebufferSize = sizeof(Sphere) * 3;
     
     // The pipeline is describes all the commands passes through in Vulkan
     VkPipelineLayout pipelineLayout;
@@ -154,10 +150,10 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
         
-        createStorageBuffer();
-        createUniformBuffer();
+        createImageStorageBuffer();
+        createObjectsStorageBuffer();
         
-        createAndMapUniformBufferData();
+        createAndMapObjectsStorageBufferData();
         
         createDescriptorSetLayout();
         createDescriptorPool();
@@ -183,8 +179,8 @@ private:
         vkDestroyBuffer(device, storageBuffer, nullptr);
         vkFreeMemory(device, storageBufferMemory, nullptr);
         
-        vkDestroyBuffer(device, uniformBuffer, nullptr);
-        vkFreeMemory(device, uniformBufferMemory, nullptr);
+        vkDestroyBuffer(device, spheresStorageBuffer, nullptr);
+        vkFreeMemory(device, spheresStorageBufferMemory, nullptr);
         
         vkDestroyCommandPool(device, commandPool, nullptr);
         
@@ -558,7 +554,7 @@ private:
         vkDestroyFence(device, fence, NULL);
     }
     
-    void createStorageBuffer() {
+    void createImageStorageBuffer() {
         // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT -> can use vkMapMemory to read the
         // buffer memory from the GPU to the CPU
         // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT -> can read from the GPU to the CPU
@@ -570,19 +566,13 @@ private:
                      storageBufferMemory);
     }
     
-    void createUniformBuffer() {
-        // For now only one sphere!
-        VkDeviceSize uniformBufferSize = sizeof(SphereUBO);
-        
-        // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT -> can use vkMapMemory to read the
-        // buffer memory from the GPU to the CPU
-        // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT -> can read from the GPU to the CPU
-        // without extra steps
-        createBuffer(uniformBufferSize,
-                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    void createObjectsStorageBuffer() {
+        // First setting up the spheres
+        createBuffer(spheresStoragebufferSize,
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     uniformBuffer,
-                     uniformBufferMemory);
+                     spheresStorageBuffer,
+                     spheresStorageBufferMemory);
     }
     
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
@@ -617,17 +607,42 @@ private:
         vkBindBufferMemory(device, buffer, bufferMemory, 0);
     }
     
-    void createAndMapUniformBufferData() {
-        SphereUBO sphereUBO = {};
-        sphereUBO.position = glm::vec3(1.0f, 0.6f, 4.0f);
-        sphereUBO.radius = 0.6f;
-        sphereUBO.albedo = glm::vec3(0.8f, 0.5f, 0.3f);
-        sphereUBO.specular = glm::vec3(0.3f, 0.3f, 0.3f);
+    void createAndMapObjectsStorageBufferData() {
+        Sphere sphere1 = {};
+        sphere1.position = glm::vec3(1.0f, 0.6f, 4.0f);
+        sphere1.radius = 0.6f;
+        sphere1.albedo = glm::vec3(0.8f, 0.5f, 0.3f);
+        sphere1.specular = glm::vec3(0.3f, 0.3f, 0.3f);
+        
+        Sphere sphere2 = {};
+        sphere2.position = glm::vec3(-1.0f, 0.6f, 4.0f);
+        sphere2.radius = 0.6f;
+        sphere2.albedo = glm::vec3(0.5f, 0.8f, 0.3f);
+        sphere2.specular = glm::vec3(0.3f, 0.3f, 0.3f);
+        
+        Sphere sphere3 = {};
+        sphere3.position = glm::vec3(0.0f, 0.8f, 5.5f);
+        sphere3.radius = 0.8f;
+        sphere3.albedo = glm::vec3(0.5f, 0.3f, 0.8f);
+        sphere3.specular = glm::vec3(0.3f, 0.3f, 0.3f);
+        
+        Sphere spheres[3] = { sphere1, sphere2, sphere3 };
         
         void* data;
-        vkMapMemory(device, uniformBufferMemory, 0, sizeof(sphereUBO), 0, &data);
-        memcpy(data, &sphereUBO, sizeof(sphereUBO));
-        vkUnmapMemory(device, uniformBufferMemory);
+        if (vkMapMemory(device, spheresStorageBufferMemory, 0, sizeof(spheres), 0, &data) != VK_SUCCESS) {
+            throw std::runtime_error("Error mapping memory!");
+        }
+        memcpy(data, spheres, sizeof(spheres));
+        vkUnmapMemory(device, spheresStorageBufferMemory);
+        
+        //memcpy(data, &sphere1UBO, sizeof(SphereUBO));
+        
+        //vkMapMemory(device, spheresUniformBufferMemory, sizeof(SphereUBO), sizeof(SphereUBO), 0, &data);
+        //memcpy(data, &sphere2UBO, sizeof(SphereUBO));
+        
+        //vkMapMemory(device, spheresUniformBufferMemory, 2 * sizeof(SphereUBO), sizeof(SphereUBO), 0, &data);
+        //memcpy(data, &sphere3UBO, sizeof(SphereUBO));
+        
     }
     
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -658,19 +673,19 @@ private:
         VkDescriptorSetLayoutBinding layoutBinding = {};
         layoutBinding.binding = 0;
         layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        layoutBinding.descriptorCount = 1; // single buffer object
+        layoutBinding.descriptorCount = 1;
         layoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         
         // Our spheres
-        VkDescriptorSetLayoutBinding uboSpheresLayoutBinding = {};
-        uboSpheresLayoutBinding.binding = 1;
-        uboSpheresLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboSpheresLayoutBinding.descriptorCount = 1; // one sphere for now
-        uboSpheresLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutBinding spheresStorageLayoutBinding = {};
+        spheresStorageLayoutBinding.binding = 1;
+        spheresStorageLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        spheresStorageLayoutBinding.descriptorCount = 1;
+        spheresStorageLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         
         std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
             layoutBinding,
-            uboSpheresLayoutBinding
+            spheresStorageLayoutBinding
         };
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -683,25 +698,17 @@ private:
     }
     
     void createDescriptorPool() {
-        // For this program, our descriptor pool will simply allocate
-        // a storage buffer, the only one we need currently
+        // For this program, our descriptor pool will allocate
+        // only storage buffers
         
         VkDescriptorPoolSize poolSizeStorageBuffer = {};
         poolSizeStorageBuffer.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        poolSizeStorageBuffer.descriptorCount = 1;
+        poolSizeStorageBuffer.descriptorCount = 2; // using two storage buffers (image and spheres)
         
-        VkDescriptorPoolSize poolSizeUniformBuffer = {};
-        poolSizeUniformBuffer.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizeUniformBuffer.descriptorCount = 1;
-        
-        std::array<VkDescriptorPoolSize, 2> descriptorPools = {
-            poolSizeStorageBuffer,
-            poolSizeUniformBuffer
-        };
         VkDescriptorPoolCreateInfo poolInfo = {};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = descriptorPools.size();
-        poolInfo.pPoolSizes = descriptorPools.data();
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSizeStorageBuffer;
         poolInfo.maxSets = 1;
         
         if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
@@ -738,23 +745,26 @@ private:
         descriptorWriteStorageBuffer.descriptorCount = 1;
         descriptorWriteStorageBuffer.pBufferInfo = &storageBufferInfo;
         
-        // For uniform buffers
-        VkDescriptorBufferInfo uniformBufferInfo = {};
-        uniformBufferInfo.buffer = uniformBuffer;
-        uniformBufferInfo.offset = 0;
-        uniformBufferInfo.range = sizeof(SphereUBO); // For now just one sphere!
+        // For our spheres
+        VkDescriptorBufferInfo spheresStorageBufferInfo = {};
+        spheresStorageBufferInfo.buffer = spheresStorageBuffer;
+        spheresStorageBufferInfo.offset = 0;
+        spheresStorageBufferInfo.range = spheresStoragebufferSize;
         
-        VkWriteDescriptorSet descriptorWriteUniformBuffer = {};
-        descriptorWriteUniformBuffer.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWriteUniformBuffer.dstSet = descriptorSet;
-        descriptorWriteUniformBuffer.dstBinding = 1;
-        descriptorWriteUniformBuffer.dstArrayElement = 0;
-        descriptorWriteUniformBuffer.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWriteUniformBuffer.descriptorCount = 1;
-        descriptorWriteUniformBuffer.pBufferInfo = &uniformBufferInfo;
-
-        vkUpdateDescriptorSets(device, 1, &descriptorWriteStorageBuffer, 0, nullptr);
-        vkUpdateDescriptorSets(device, 1, &descriptorWriteUniformBuffer, 0, nullptr);
+        VkWriteDescriptorSet descriptorWriteSpheresStorageBuffer = {};
+        descriptorWriteSpheresStorageBuffer.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWriteSpheresStorageBuffer.dstSet = descriptorSet;
+        descriptorWriteSpheresStorageBuffer.dstBinding = 1;
+        descriptorWriteSpheresStorageBuffer.dstArrayElement = 0;
+        descriptorWriteSpheresStorageBuffer.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        descriptorWriteSpheresStorageBuffer.descriptorCount = 1;
+        descriptorWriteSpheresStorageBuffer.pBufferInfo = &spheresStorageBufferInfo;
+        
+        VkWriteDescriptorSet writeDescSets[2] = {
+            descriptorWriteStorageBuffer,
+            descriptorWriteSpheresStorageBuffer
+        };
+        vkUpdateDescriptorSets(device, 2, writeDescSets, 0, nullptr);
     }
     
     void saveRenderedImage() {

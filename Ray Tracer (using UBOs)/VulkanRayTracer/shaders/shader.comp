@@ -179,24 +179,14 @@ DirectionalLight createDirectionalLight() {
 // Sphere
 // -------------------------------------------
 struct Sphere {
-    vec3 position;
     float radius;
-    
+    vec3 position;
     vec3 albedo;
     vec3 specular;
 };
-layout(binding = 1) uniform SphereBuffer {
-    Sphere someSphere;
+layout(binding = 1) buffer SphereBuffer {
+    Sphere spheres[3];
 };
-
-Sphere createSphere(vec3 position, float radius, vec3 albedo, vec3 specular) {
-    Sphere sphere;
-    sphere.position = position;
-    sphere.radius = radius;
-    sphere.albedo = albedo;
-    sphere.specular = specular;
-    return sphere;
-}
 
 void intersectSphere(Ray ray, Sphere sphere, inout RayHit bestHit) {
     // Calculate distance along the ray where the sphere is intersected
@@ -227,10 +217,13 @@ RayHit trace(Ray ray) {
     //Sphere sphere3 = createSphere(vec3(0.0f, 0.8f, 5.5f), 0.8f,
     //                              vec3(0.5f, 0.3f, 0.8f), vec3(0.3f));
     
-    Sphere sphere1 = someSphere;
+    Sphere sphere1 = spheres[0];
+    Sphere sphere2 = spheres[1];
+    Sphere sphere3 = spheres[2];
+    
     intersectSphere(ray, sphere1, bestHit);
-    //intersectSphere(ray, sphere2, bestHit);
-    //intersectSphere(ray, sphere3, bestHit);
+    intersectSphere(ray, sphere2, bestHit);
+    intersectSphere(ray, sphere3, bestHit);
     
     return bestHit;
 }

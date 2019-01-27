@@ -15,7 +15,23 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "633"
             endingLineNumber = "633"
-            landmarkName = "findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)"
+            landmarkName = "createAndMapObjectsStorageBufferData()"
+            landmarkType = "7">
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            shouldBeEnabled = "No"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "VulkanRayTracer/main.cpp"
+            timestampString = "570215914.447751"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "634"
+            endingLineNumber = "634"
+            landmarkName = "createAndMapObjectsStorageBufferData()"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
