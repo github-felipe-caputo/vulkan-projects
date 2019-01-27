@@ -569,7 +569,7 @@ private:
     void createObjectsStorageBuffer() {
         // First setting up the spheres
         createBuffer(spheresStoragebufferSize,
-                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                      spheresStorageBuffer,
                      spheresStorageBufferMemory);
@@ -679,7 +679,7 @@ private:
         // Our spheres
         VkDescriptorSetLayoutBinding spheresStorageLayoutBinding = {};
         spheresStorageLayoutBinding.binding = 1;
-        spheresStorageLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        spheresStorageLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         spheresStorageLayoutBinding.descriptorCount = 1;
         spheresStorageLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         
@@ -699,16 +699,22 @@ private:
     
     void createDescriptorPool() {
         // For this program, our descriptor pool will allocate
-        // only storage buffers
+        // storage buffers and uniform buffers
         
         VkDescriptorPoolSize poolSizeStorageBuffer = {};
         poolSizeStorageBuffer.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        poolSizeStorageBuffer.descriptorCount = 2; // using two storage buffers (image and spheres)
+        poolSizeStorageBuffer.descriptorCount = 1; // only one storage buffer
+        
+        VkDescriptorPoolSize poolSizeUniformBuffer = {};
+        poolSizeUniformBuffer.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizeUniformBuffer.descriptorCount = 1; // only one unigorm buffer
+        
+        VkDescriptorPoolSize poolSizeArray[2] = { poolSizeStorageBuffer, poolSizeUniformBuffer };
         
         VkDescriptorPoolCreateInfo poolInfo = {};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSizeStorageBuffer;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = poolSizeArray;
         poolInfo.maxSets = 1;
         
         if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
@@ -756,7 +762,7 @@ private:
         descriptorWriteSpheresStorageBuffer.dstSet = descriptorSet;
         descriptorWriteSpheresStorageBuffer.dstBinding = 1;
         descriptorWriteSpheresStorageBuffer.dstArrayElement = 0;
-        descriptorWriteSpheresStorageBuffer.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        descriptorWriteSpheresStorageBuffer.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWriteSpheresStorageBuffer.descriptorCount = 1;
         descriptorWriteSpheresStorageBuffer.pBufferInfo = &spheresStorageBufferInfo;
         

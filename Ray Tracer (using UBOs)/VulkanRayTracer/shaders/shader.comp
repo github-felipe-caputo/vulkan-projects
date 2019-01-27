@@ -184,7 +184,7 @@ struct Sphere {
     vec3 albedo;
     vec3 specular;
 };
-layout(binding = 1) buffer SphereBuffer {
+layout(binding = 1) uniform SphereBuffer {
     Sphere spheres[3];
 };
 
