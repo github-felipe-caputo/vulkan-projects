@@ -212,11 +212,9 @@ RayHit trace(Ray ray) {
     RayHit bestHit = createRayHit();
     intersectGroundPlane(ray, bestHit);
     
-    //Sphere sphere2 = createSphere(vec3(-1.0f, 0.6f, 4.0f), 0.6f,
-    //                              vec3(0.5f, 0.8f, 0.3f), vec3(0.3f));
-    //Sphere sphere3 = createSphere(vec3(0.0f, 0.8f, 5.5f), 0.8f,
-    //                              vec3(0.5f, 0.3f, 0.8f), vec3(0.3f));
-    
+    // This might look weird (and it is), but it's a workaround
+    // when using GLSL. See the related issue at:
+    // https://github.com/KhronosGroup/glslang/issues/988
     Sphere sphere1 = spheres[0];
     Sphere sphere2 = spheres[1];
     Sphere sphere3 = spheres[2];
